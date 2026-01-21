@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Type, GenerateContentResponse, Modality } from "@google/genai";
 import { TriageResult, TriageLevel, Provider } from "../types";
-import { SYSTEM_PROMPT } from "../constants";
+import { SYSTEM_PROMPT, CUSTOMER_SERVICE_PROMPT } from "../constants";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -41,6 +41,20 @@ export async function processTriage(history: { role: string, text: string }[], l
     console.error("Failed to parse triage response", e);
     return { isTriageComplete: false, nextQuestion: "I'm sorry, I'm having trouble processing that. Can you tell me more about your symptoms?" };
   }
+}
+
+export async function processSupport(history: { role: string, text: string }[], language: string) {
+  const model = 'gemini-3-flash-preview';
+  
+  const response = await ai.models.generateContent({
+    model,
+    contents: history.map(h => ({ role: h.role, parts: [{ text: h.text }] })),
+    config: {
+      systemInstruction: `${CUSTOMER_SERVICE_PROMPT}\n\nIMPORTANT: Respond in ${language}.`,
+    }
+  });
+
+  return response.text || "I'm sorry, I couldn't process that request.";
 }
 
 export async function searchProviders(specialty: string, zipCode: string, insurance?: string, language: string = 'English'): Promise<Provider[]> {

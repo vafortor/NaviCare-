@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Message, TriageResult, TriageLevel, Provider, AssessmentData } from './types';
-import { processTriage, searchProviders, getGreeting, generateSpeech } from './services/geminiService';
+import { processTriage, processSupport, searchProviders, getGreeting, generateSpeech } from './services/geminiService';
 import { RED_FLAGS, APP_THEME } from './constants';
+
+type ChatMode = 'triage' | 'support';
 
 const LANGUAGES = [
   { code: 'English', label: 'English', flag: '🇺🇸', voice: 'Kore' },
@@ -71,6 +73,7 @@ const App: React.FC = () => {
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [mode, setMode] = useState<ChatMode>('triage');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const langMenuRef = useRef<HTMLDivElement>(null);
@@ -164,7 +167,6 @@ const App: React.FC = () => {
   };
 
   const handleNewAssessment = () => {
-    // Reset all session specific states
     setMessages([]);
     setInput('');
     setLoading(false);
@@ -177,8 +179,8 @@ const App: React.FC = () => {
     setShowConsent(true);
     setIsSpeaking(false);
     setIsListening(false);
+    setMode('triage');
     
-    // Stop any ongoing speech or recognition
     if (recognitionRef.current) recognitionRef.current.stop();
     if (audioContextRef.current) {
       audioContextRef.current.close().then(() => {
@@ -250,24 +252,35 @@ const App: React.FC = () => {
         text: m.text
       }));
 
-      const result = await processTriage(history, language);
+      if (mode === 'triage') {
+        const result = await processTriage(history, language);
 
-      if (result.isTriageComplete && result.triageResult) {
-        setTriageResult(result.triageResult);
-        if (result.triageResult.level === TriageLevel.EMERGENCY) {
-          setIsEmergencyEscalated(true);
+        if (result.isTriageComplete && result.triageResult) {
+          setTriageResult(result.triageResult);
+          if (result.triageResult.level === TriageLevel.EMERGENCY) {
+            setIsEmergencyEscalated(true);
+          }
+          
+          const assistantMessage: Message = {
+            role: 'model',
+            text: result.triageResult.recommendation,
+            timestamp: Date.now()
+          };
+          setMessages(prev => [...prev, assistantMessage]);
+        } else {
+          const assistantMessage: Message = {
+            role: 'model',
+            text: result.nextQuestion || "Can you tell me more?",
+            timestamp: Date.now()
+          };
+          setMessages(prev => [...prev, assistantMessage]);
         }
-        
-        const assistantMessage: Message = {
-          role: 'model',
-          text: result.triageResult.recommendation,
-          timestamp: Date.now()
-        };
-        setMessages(prev => [...prev, assistantMessage]);
       } else {
+        // Support mode
+        const supportResponse = await processSupport(history, language);
         const assistantMessage: Message = {
           role: 'model',
-          text: result.nextQuestion || "Can you tell me more?",
+          text: supportResponse,
           timestamp: Date.now()
         };
         setMessages(prev => [...prev, assistantMessage]);
@@ -392,23 +405,6 @@ const App: React.FC = () => {
         {p.address}
       </p>
       
-      {p.hours && (
-        <p className="text-[10px] text-slate-400 mb-2 flex items-center gap-1">
-          <i className="fa-regular fa-clock"></i>
-          {p.hours}
-        </p>
-      )}
-
-      {p.acceptedInsurance && p.acceptedInsurance.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-1">
-           {p.acceptedInsurance.map((ins, i) => (
-             <span key={i} className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
-               {ins}
-             </span>
-           ))}
-        </div>
-      )}
-
       <div className="flex flex-col gap-2 pt-2 border-t border-slate-50">
         <div className="flex items-center justify-between">
            <a href={`tel:${p.phone}`} className="text-[11px] text-blue-600 font-bold flex items-center gap-1 hover:underline">
@@ -532,7 +528,35 @@ const App: React.FC = () => {
       <main className="flex-1 overflow-y-auto p-4 space-y-6 flex flex-col md:flex-row gap-6">
         {/* Left Column: Chat Interface */}
         <div className="flex-1 flex flex-col h-full bg-slate-50 rounded-xl border border-slate-200 overflow-hidden min-h-[400px]">
+          {/* Mode Switcher */}
+          <div className="flex border-b border-slate-200 bg-white">
+            <button 
+              onClick={() => setMode('triage')}
+              className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-all ${mode === 'triage' ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              <i className="fa-solid fa-stethoscope mr-2"></i>
+              Symptom Triage
+            </button>
+            <button 
+              onClick={() => setMode('support')}
+              className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-all ${mode === 'support' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              <i className="fa-solid fa-headset mr-2"></i>
+              App Support
+            </button>
+          </div>
+
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-slate-400 italic text-center p-8">
+                <i className={`fa-solid ${mode === 'triage' ? 'fa-heart-pulse' : 'fa-circle-question'} text-4xl mb-4 opacity-10`}></i>
+                <p className="text-sm">
+                  {mode === 'triage' 
+                    ? "Start by describing your symptoms. I'll ask a few questions to help navigate you to the right care." 
+                    : "Ask me anything about NaviCare, premium features, or technical help."}
+                </p>
+              </div>
+            )}
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] p-4 rounded-2xl relative ${
@@ -572,36 +596,34 @@ const App: React.FC = () => {
           </div>
 
           {/* Chat Input */}
-          {!triageResult && (
-            <div className="p-4 bg-white border-t border-slate-200">
-               <div className="flex gap-2 items-center">
-                  <button 
-                    onClick={handleListen}
-                    className={`p-2 rounded-full transition-all ${isListening ? 'bg-red-100 text-red-600 animate-pulse scale-110 shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-                    title={isListening ? "Stop listening" : "Voice input"}
-                  >
-                    <i className={`fa-solid ${isListening ? 'fa-microphone-slash' : 'fa-microphone'}`}></i>
-                  </button>
-                  
-                  <input
-                    type="text"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                    placeholder={isListening ? "Listening..." : "Type a message..."}
-                    className="flex-1 border border-slate-300 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-                  />
-                  
-                  <button 
-                    onClick={handleSend}
-                    disabled={loading || !input.trim()}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition disabled:opacity-50"
-                  >
-                    <i className="fa-solid fa-paper-plane"></i>
-                  </button>
-               </div>
-            </div>
-          )}
+          <div className="p-4 bg-white border-t border-slate-200">
+              <div className="flex gap-2 items-center">
+                <button 
+                  onClick={handleListen}
+                  className={`p-2 rounded-full transition-all ${isListening ? 'bg-red-100 text-red-600 animate-pulse scale-110 shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                  title={isListening ? "Stop listening" : "Voice input"}
+                >
+                  <i className={`fa-solid ${isListening ? 'fa-microphone-slash' : 'fa-microphone'}`}></i>
+                </button>
+                
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                  placeholder={isListening ? "Listening..." : mode === 'triage' ? "Describe your symptoms..." : "Ask a question..."}
+                  className={`flex-1 border rounded-lg px-4 py-2 text-sm focus:ring-2 focus:outline-none transition-all ${mode === 'triage' ? 'border-slate-300 focus:ring-blue-500' : 'border-indigo-200 focus:ring-indigo-500'}`}
+                />
+                
+                <button 
+                  onClick={handleSend}
+                  disabled={loading || !input.trim()}
+                  className={`${mode === 'triage' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white px-6 py-2 rounded-lg font-medium transition disabled:opacity-50`}
+                >
+                  <i className="fa-solid fa-paper-plane"></i>
+                </button>
+              </div>
+          </div>
         </div>
 
         {/* Right Column: Results & Providers */}
@@ -648,7 +670,7 @@ const App: React.FC = () => {
 
            {/* Triage Status Card */}
            {triageResult && !showSaved && (
-             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden animate-in fade-in slide-in-from-right-4">
                 <div className={`p-4 flex items-center gap-3 text-white ${
                   triageResult.level === TriageLevel.EMERGENCY ? 'bg-red-600' :
                   triageResult.level === TriageLevel.URGENT ? 'bg-amber-500' :
@@ -682,7 +704,7 @@ const App: React.FC = () => {
 
            {/* Provider Search Card */}
            {triageResult && triageResult.level !== TriageLevel.EMERGENCY && triageResult.level !== TriageLevel.SELF_CARE && !showSaved && (
-             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 animate-in fade-in slide-in-from-bottom-4">
                 <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
                   <i className="fa-solid fa-magnifying-glass-location text-blue-600"></i>
                   Find a Provider
@@ -738,10 +760,18 @@ const App: React.FC = () => {
              </div>
            )}
            
-           {!triageResult && !showSaved && (
+           {!triageResult && !showSaved && mode === 'triage' && (
              <div className="bg-slate-50 rounded-xl border border-slate-200 border-dashed p-12 flex flex-col items-center justify-center text-slate-400 text-center">
                 <i className="fa-solid fa-clipboard-list text-3xl mb-4 opacity-20"></i>
                 <p className="text-xs italic leading-relaxed">Triage results and local provider matches will be displayed here once your assessment is complete.</p>
+             </div>
+           )}
+
+           {mode === 'support' && !showSaved && (
+             <div className="bg-indigo-50 rounded-xl border border-indigo-100 p-6 flex flex-col items-center justify-center text-indigo-400 text-center">
+                <i className="fa-solid fa-headset text-3xl mb-4 opacity-20"></i>
+                <h4 className="font-bold text-indigo-700 text-xs mb-2">Platform Assistance</h4>
+                <p className="text-[10px] italic leading-relaxed">Ask about premium plans, privacy, or how to use the app. Our support agent is here to guide you through the NaviCare platform.</p>
              </div>
            )}
         </aside>
@@ -750,7 +780,7 @@ const App: React.FC = () => {
       {/* Persistent Safety Banner */}
       <footer className="bg-slate-900 text-slate-400 py-2 px-4 text-[10px] flex justify-between items-center shrink-0">
          <div className="flex gap-4">
-           <span>&copy; NaviCare AI 2024</span>
+           <span>&copy; NaviCare AI 2026</span>
            <span>Standard Compliance Ready</span>
          </div>
          <div className="flex items-center gap-1">
