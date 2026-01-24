@@ -24,7 +24,7 @@ const LANGUAGES = [
   { code: 'Vietnamese', label: 'Tiếng Việt', flag: '🇻🇳', voice: 'Kore' }
 ];
 
-const STRIPE_URL = "https://buy.stripe.com/9B6eV63n9cFu9aP83D3AY02";
+const STRIPE_URL = "https://buy.stripe.com/8x28wIbTFaxmaeTbfP3AY04";
 
 // Helper functions for audio processing
 function decode(base64: string) {
@@ -642,7 +642,7 @@ const App: React.FC = () => {
                 rel="noopener noreferrer"
                 className="block w-full bg-white text-amber-600 text-center py-2 rounded-lg text-xs font-bold hover:bg-amber-50 transition-colors shadow-sm"
               >
-                Upgrade for $25/mo
+                Upgrade for $5.99
               </a>
            </div>
 
